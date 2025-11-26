@@ -24,7 +24,7 @@
 
   // Base groups
   const pointsLayer = L.layerGroup().addTo(map);
-  const control = L.control.layers(null, { 'Points': pointsLayer }, { collapsed: false }).addTo(map);
+  const control = L.control.layers(null, { 'All Schools': pointsLayer }, { collapsed: false }).addTo(map);
 
   function parseCoord(v){
     if(v === undefined || v === null) return null;
@@ -36,11 +36,38 @@
   function propertiesToHtml(props){
     let html = '';
     const keys = Object.keys(props || {});
-    const titleKey = keys.find(k=>/name|school|title/i.test(k)) || keys[0];
+    // normalize keys map: lowercased -> original
+    const norm = {};
+    for(const k of keys) norm[k.trim().toLowerCase()] = k;
+
+    // title detection (same as before)
+    const titleKey = (keys.find(k=>/name|school|title/i.test(k)) || keys[0]);
     if(titleKey) html += `<b>${props[titleKey] || titleKey}</b><br/>`;
+
+    // find old/new key (many possible names)
+    const oldNewKey = norm['old/new'] || norm['old_new'] ||
+                      Object.keys(norm).find(k=>/old|new|status|phase|type/i.test(k)) && norm[Object.keys(norm).find(k=>/old|new|status|phase|type/i.test(k))];
+
+    // find quintile key
+    const quintKey = norm['quintile'] || norm['quint'] ||
+                     Object.keys(norm).find(k=>/quint/i.test(k)) && norm[Object.keys(norm).find(k=>/quint/i.test(k))];
+
+    if(oldNewKey){
+      const v = props[oldNewKey];
+      if(v !== undefined && v !== null && String(v).trim() !== '') html += `<b>Old / New:</b> ${v}<br/>`;
+    }
+    if(quintKey){
+      const v = props[quintKey];
+      if(v !== undefined && v !== null && String(v).trim() !== '') html += `<b>Quintile:</b> ${v}<br/>`;
+    }
+
+    // then list remaining properties (skip empty and the ones we've shown)
     for(const k of keys){
+      if(k === titleKey) continue;
+      if(k === oldNewKey) continue;
+      if(k === quintKey) continue;
       const v = props[k];
-      if(v === undefined || v === null || v === '') continue;
+      if(v === undefined || v === null || String(v).trim() === '') continue;
       html += `<b>${k}:</b> ${v}<br/>`;
     }
     return html;

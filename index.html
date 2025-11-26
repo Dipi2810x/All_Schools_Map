@@ -1,0 +1,133 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Western Cape — Interactive Map (with Excel)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    html,body,#map { height:100%; margin:0; padding:0; }
+    .legend { background:white; padding:6px; font-size:13px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <script>
+  // Leaflet map
+  const map = L.map('map').setView([-33.95, 18.6], 9);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+
+  // Base groups
+  const pointsLayer = L.layerGroup().addTo(map);
+  const control = L.control.layers(null, { 'Points': pointsLayer }, { collapsed: false }).addTo(map);
+
+  function parseCoord(v){
+    if(v === undefined || v === null) return null;
+    const s = String(v).trim().replace(',', '.');
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function propertiesToHtml(props){
+    let html = '';
+    const keys = Object.keys(props || {});
+    const titleKey = keys.find(k=>/name|school|title/i.test(k)) || keys[0];
+    if(titleKey) html += `<b>${props[titleKey] || titleKey}</b><br/>`;
+    for(const k of keys){
+      const v = props[k];
+      if(v === undefined || v === null || v === '') continue;
+      html += `<b>${k}:</b> ${v}<br/>`;
+    }
+    return html;
+  }
+
+  function addPoint(lat, lon, props){
+    if(lat === null || lon === null) return;
+    const m = L.circleMarker([lat, lon], { radius:5, color:'#1f78b4', fill:true, fillOpacity:0.9 });
+    m.bindPopup(propertiesToHtml(props));
+    pointsLayer.addLayer(m);
+  }
+
+  async function tryLoadGeoJSON(name, title){
+    try{
+      const r = await fetch(name);
+      if(!r.ok) throw new Error('not found');
+      const gj = await r.json();
+      const g = L.geoJSON(gj, {
+        pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius:4, color:'#e31a1c', fill:true, fillOpacity:0.8 }),
+        onEachFeature: (f, layer) => layer.bindPopup(propertiesToHtml(f.properties))
+      }).addTo(map);
+      control.addOverlay(g, title);
+      console.log('Loaded', name);
+      return true;
+    } catch(e){
+      console.warn('GeoJSON not loaded:', name);
+      return false;
+    }
+  }
+
+  // load geojson files with basenames matching lyrx files
+  (async function(){
+    const basenames = ['All_Participating_Schools','Cape_Town','Eden_Karoo','Stellenbosch','West_Coast'];
+    for(const b of basenames){
+      await tryLoadGeoJSON(b + '.geojson', b);
+    }
+
+    // Try Excel first: 2018_2025_Summary.xlsx in this folder
+    const xlsxFiles = ['2018_2025_Summary.xlsx','2018_2025_Summary.XLSX'];
+    let excelLoaded = false;
+    for(const f of xlsxFiles){
+      try{
+        const resp = await fetch(f);
+        if(!resp.ok) continue;
+        const ab = await resp.arrayBuffer();
+        const wb = XLSX.read(ab, {type:'array'});
+        const sheetName = wb.SheetNames[0];
+        const ws = wb.Sheets[sheetName];
+        const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        console.log('Parsed', f, 'rows:', data.length);
+        data.forEach(row => {
+          // guess coordinate columns
+          const lonCandidates = ['X_COORDINATE','X-coordinate','X','Lon','LON','LONGITUDE','Longitude','x_coordinate','x-coordinate','x','lon','lng'];
+          const latCandidates = ['Y_COORDINATE','Y-coordinate','Y','Lat','LAT','LATITUDE','Latitude','y_coordinate','y-coordinate','y','lat'];
+          let lon=null, lat=null;
+          for(const k of Object.keys(row)){
+            const kk = k.trim();
+            if(lon === null && lonCandidates.some(c=>c.toLowerCase()===kk.toLowerCase())) lon = parseCoord(row[k]);
+            if(lat === null && latCandidates.some(c=>c.toLowerCase()===kk.toLowerCase())) lat = parseCoord(row[k]);
+          }
+          // also check if columns are named differently - try any numeric-looking columns
+          if(lat===null || lon===null){
+            for(const k of Object.keys(row)){
+              if(lat===null && /lat/i.test(k)) lat = parseCoord(row[k]);
+              if(lon===null && /lon|long|x/i.test(k)) lon = parseCoord(row[k]);
+            }
+          }
+          // final fallback: try columns by position if headerless
+          addPoint(lat, lon, row);
+        });
+        excelLoaded = true;
+        break;
+      } catch(e){
+        console.warn('Excel not loaded:', f, e.message || e);
+      }
+    }
+
+    
+
+    // Fit to points
+    if(pointsLayer.getLayers().length){
+      const fg = L.featureGroup(pointsLayer.getLayers());
+      map.fitBounds(fg.getBounds(), { padding:[20,20], maxZoom:15 });
+    }
+
+  })();
+
+  </script>
+</body>
+</html>

@@ -16,6 +16,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 
   <script>
   // Leaflet map
@@ -25,6 +26,9 @@
   // Base groups
   const pointsLayer = L.layerGroup().addTo(map);
   const control = L.control.layers(null, { 'All Schools': pointsLayer }, { collapsed: false }).addTo(map);
+
+  // Districts GeoJSON (load Education_Districts.geojson next to index.html)
+  let districtsGeoJSON = null;
 
   function parseCoord(v){
     if(v === undefined || v === null) return null;
@@ -76,8 +80,33 @@
   function addPoint(lat, lon, props){
     if(lat === null || lon === null) return;
     const m = L.circleMarker([lat, lon], { radius:5, color:'#1f78b4', fill:true, fillOpacity:0.9 });
-    m.bindPopup(propertiesToHtml(props));
+    // store original properties on the marker so we can update popup later
+    m.originalProps = props || {};
+    m.bindPopup(propertiesToHtml(m.originalProps));
     pointsLayer.addLayer(m);
+  }
+
+  function assignDistrictsToPoints(){
+    if(!districtsGeoJSON) return;
+    if(!pointsLayer.getLayers().length) return;
+    // iterate markers and test against each district polygon
+    pointsLayer.getLayers().forEach(m => {
+      const latlng = m.getLatLng();
+      const pt = turf.point([latlng.lng, latlng.lat]);
+      let matched = null;
+      for(const f of districtsGeoJSON.features){
+        if(turf.booleanPointInPolygon(pt, f)){
+          matched = f.properties || {};
+          break;
+        }
+      }
+      if(matched){
+        m.originalProps = Object.assign({}, m.originalProps, { district: matched.NAME || matched.name || matched.DISTRICT || '' });
+      } else {
+        m.originalProps = Object.assign({}, m.originalProps, { district: null });
+      }
+      m.bindPopup(propertiesToHtml(m.originalProps));
+    });
   }
 
   async function tryLoadGeoJSON(name, title){
@@ -86,6 +115,7 @@
       if(!r.ok) throw new Error('not found');
       const gj = await r.json();
       const g = L.geoJSON(gj, {
+        style: (f) => ({ color: '#338833', weight: 1, fillColor: '#88ff88', fillOpacity: 0.25 }),
         pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius:4, color:'#e31a1c', fill:true, fillOpacity:0.8 }),
         onEachFeature: (f, layer) => layer.bindPopup(propertiesToHtml(f.properties))
       }).addTo(map);
@@ -103,6 +133,39 @@
     const basenames = ['All_Participating_Schools','Cape_Town','Eden_Karoo','Stellenbosch','West_Coast'];
     for(const b of basenames){
       await tryLoadGeoJSON(b + '.geojson', b);
+    }
+
+    // try loading the Education Districts layer (exported from QGIS as a GeoPackage — convert to GeoJSON)
+    // place Education_Districts.geojson next to index.html for client-side loading
+    // prefer the reprojected WGS84 file if present
+    let loadedDistricts = await tryLoadGeoJSON('Education_Districts_wgs84.geojson', 'Education Districts');
+    if(!loadedDistricts){
+      loadedDistricts = await tryLoadGeoJSON('Education_Districts.geojson', 'Education Districts');
+    }
+    if(!loadedDistricts){
+      // try some common name variants (spaces, dashes, lowercase)
+      const variants = ['education_districts.geojson','education-districts.geojson','education districts.geojson','education%20districts.geojson','EducationDistricts.geojson'];
+      for(const v of variants){
+        loadedDistricts = await tryLoadGeoJSON(v, 'Education Districts');
+        if(loadedDistricts) break;
+      }
+    }
+    if(loadedDistricts){
+      try{
+        // fetch and store the raw geojson for turf tests (try reprojected filename first)
+        const r = await fetch('Education_Districts_wgs84.geojson');
+        if(r.ok) districtsGeoJSON = await r.json();
+        else {
+          // fallback: find the loaded layer from control (take first overlay)
+          // attempt to fetch any of the variants that succeeded
+          for(const v of ['Education_Districts.geojson','education_districts.geojson','education-districts.geojson','education districts.geojson','education%20districts.geojson','EducationDistricts.geojson']){
+            try{
+              const r2 = await fetch(v);
+              if(r2.ok){ districtsGeoJSON = await r2.json(); break; }
+            }catch(e){}
+          }
+        }
+      } catch(e){ console.warn('Could not fetch districts geojson for turf:', e); }
     }
 
     // Try Excel first: 2018_2025_Summary.xlsx in this folder
@@ -144,6 +207,9 @@
         console.warn('Excel not loaded:', f, e.message || e);
       }
     }
+
+    // after loading both points and districts, assign districts
+    assignDistrictsToPoints();
 
     
 

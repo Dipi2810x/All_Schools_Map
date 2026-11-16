@@ -8,6 +8,14 @@
   <style>
     html, body, #map { height: 100%; margin: 0; padding: 0; }
     .legend { background: white; padding: 6px; font-size: 13px; }
+    .venue-marker {
+      background: transparent;
+      border: 0;
+    }
+    .venue-marker svg {
+      display: block;
+      filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+    }
   </style>
 </head>
 <body>
@@ -23,7 +31,7 @@
     }).addTo(map);
 
     // Higher panes are always rendered above lower panes, independent of fetch order.
-    ['districts', 'ctDistricts', 'schools', 'expo'].forEach((name, index) => {
+    ['districts', 'ctDistricts', 'schools', 'expo', 'deVenues', 'seVenues'].forEach((name, index) => {
       map.createPane(name);
       map.getPane(name).style.zIndex = 400 + index * 10;
     });
@@ -32,11 +40,15 @@
     const ctDistrictsLayer = L.layerGroup().addTo(map);
     const schoolsLayer = L.layerGroup().addTo(map);
     const expoLayer = L.layerGroup().addTo(map);
+    const deVenuesLayer = L.layerGroup().addTo(map);
+    const seVenuesLayer = L.layerGroup().addTo(map);
     L.control.layers(null, {
-      'Education districts': districtsLayer,
-      'CT education districts': ctDistrictsLayer,
+      '2026 DE venues': deVenuesLayer,
+      '2026 SE venues': seVenuesLayer ,
+      '2026 District and School Expo': expoLayer,
       'All schools (2018-2025)': schoolsLayer,
-      '2026 District and School Expo': expoLayer
+      'CT education districts': ctDistrictsLayer,
+      'Education districts': districtsLayer
     }, { collapsed: false }).addTo(map);
 
     function parseCoord(value) {
@@ -56,6 +68,23 @@
       const marker = L.circleMarker([lat, lon], {
         radius: 5, color, fill: true, fillOpacity: 0.9, pane
       }).bindPopup(propertiesToHtml(properties));
+      layer.addLayer(marker);
+      return marker;
+    }
+
+    function addVenuePoint(layer, lat, lon, properties, color, pane) {
+      if (lat === null || lon === null) return null;
+      const icon = L.divIcon({
+        className: 'venue-marker',
+        iconSize: [30, 36],
+        iconAnchor: [15, 36],
+        popupAnchor: [0, -32],
+        html: `<svg width="30" height="36" viewBox="0 0 30 36" aria-label="School venue">
+          <path d="M15 35C15 35 4 22.8 4 14.5C4 8.4 8.9 3.5 15 3.5S26 8.4 26 14.5C26 22.8 15 35 15 35Z" fill="${color}" stroke="#fff" stroke-width="1.5"/>
+          <path d="M9 13.5h12v9H9zM8 13.5l7-4 7 4M12 16v6M18 16v6M14 22v-4h2v4" fill="#fff" stroke="${color}" stroke-width="1"/>
+        </svg>`
+      });
+      const marker = L.marker([lat, lon], { icon, pane }).bindPopup(propertiesToHtml(properties));
       layer.addLayer(marker);
       return marker;
     }
@@ -110,6 +139,17 @@
       });
     }
 
+    async function loadVenuePoints(file, layer, color, pane) {
+      const response = await fetch(file);
+      if (!response.ok) throw new Error(`${file}: ${response.status}`);
+      const text = await response.text();
+      const parsed = Papa.parse(text, { header: true, skipEmptyLines: true, delimiter: ';' });
+      parsed.data.forEach(row => {
+        const { lat, lon } = coordinateColumns(row);
+        addVenuePoint(layer, lat, lon, row, color, pane);
+      });
+    }
+
     async function loadMapData() {
       let districts;
       try {
@@ -134,8 +174,19 @@
       } catch (error) {
         console.error('2026 expo points could not be loaded:', error);
       }
+      try {
+        await loadVenuePoints('2026_DE_Venues.csv', deVenuesLayer, '#7b3294', 'deVenues');
+      } catch (error) {
+        console.error('2026 DE venues could not be loaded:', error);
+      }
+      try {
+        await loadVenuePoints('2026_SE_Venues.csv', seVenuesLayer, '#008837', 'seVenues');
+      } catch (error) {
+        console.error('2026 SE venues could not be loaded:', error);
+      }
 
-      const visibleLayers = schoolsLayer.getLayers().concat(expoLayer.getLayers());
+      const visibleLayers = schoolsLayer.getLayers()
+        .concat(expoLayer.getLayers(), deVenuesLayer.getLayers(), seVenuesLayer.getLayers());
       if (visibleLayers.length) {
         map.fitBounds(L.featureGroup(visibleLayers).getBounds(), { padding: [20, 20], maxZoom: 15 });
       } else if (districts && districts.features.length) {

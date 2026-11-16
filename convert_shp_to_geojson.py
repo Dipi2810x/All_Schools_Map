@@ -20,7 +20,11 @@ if not os.path.exists(args.shp):
     parser.error("Shapefile not found: " + args.shp)
 
 reader = shapefile.Reader(shp=args.shp)
-fields = [field[0] for field in reader.fields[1:]] if reader.dbf else []
+try:
+    dbf_fields = reader.fields[1:]
+except shapefile.ShapefileException:
+    dbf_fields = []
+fields = [field[0] for field in dbf_fields]
 features = []
 for index, shape in enumerate(reader.shapes(), start=1):
     props = {"feature_id": index}

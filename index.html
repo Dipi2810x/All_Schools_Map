@@ -2,225 +2,149 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Western Cape — Interactive Map (with Excel)</title>
+  <title>Western Cape Education Map</title>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <style>
-    html,body,#map { height:100%; margin:0; padding:0; }
-    .legend { background:white; padding:6px; font-size:13px; }
+    html, body, #map { height: 100%; margin: 0; padding: 0; }
+    .legend { background: white; padding: 6px; font-size: 13px; }
   </style>
 </head>
 <body>
   <div id="map"></div>
-
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 
   <script>
-  // Leaflet map
-  const map = L.map('map').setView([-33.95, 18.6], 9);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    const map = L.map('map').setView([-33.95, 18.6], 9);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© OpenStreetMap'
+    }).addTo(map);
 
-  // Base groups
-  const pointsLayer = L.layerGroup().addTo(map);
-  const control = L.control.layers(null, { 'All Schools': pointsLayer }, { collapsed: false }).addTo(map);
-
-  // Districts GeoJSON (load Education_Districts.geojson next to index.html)
-  let districtsGeoJSON = null;
-
-  function parseCoord(v){
-    if(v === undefined || v === null) return null;
-    const s = String(v).trim().replace(',', '.');
-    const n = parseFloat(s);
-    return Number.isFinite(n) ? n : null;
-  }
-
-  function propertiesToHtml(props){
-    let html = '';
-    const keys = Object.keys(props || {});
-    // normalize keys map: lowercased -> original
-    const norm = {};
-    for(const k of keys) norm[k.trim().toLowerCase()] = k;
-
-    // title detection (same as before)
-    const titleKey = (keys.find(k=>/name|school|title/i.test(k)) || keys[0]);
-    if(titleKey) html += `<b>${props[titleKey] || titleKey}</b><br/>`;
-
-    // find old/new key (many possible names)
-    const oldNewKey = norm['old/new'] || norm['old_new'] ||
-                      Object.keys(norm).find(k=>/old|new|status|phase|type/i.test(k)) && norm[Object.keys(norm).find(k=>/old|new|status|phase|type/i.test(k))];
-
-    // find quintile key
-    const quintKey = norm['quintile'] || norm['quint'] ||
-                     Object.keys(norm).find(k=>/quint/i.test(k)) && norm[Object.keys(norm).find(k=>/quint/i.test(k))];
-
-    if(oldNewKey){
-      const v = props[oldNewKey];
-      if(v !== undefined && v !== null && String(v).trim() !== '') html += `<b>Old / New:</b> ${v}<br/>`;
-    }
-    if(quintKey){
-      const v = props[quintKey];
-      if(v !== undefined && v !== null && String(v).trim() !== '') html += `<b>Quintile:</b> ${v}<br/>`;
-    }
-
-    // then list remaining properties (skip empty and the ones we've shown)
-    for(const k of keys){
-      if(k === titleKey) continue;
-      if(k === oldNewKey) continue;
-      if(k === quintKey) continue;
-      const v = props[k];
-      if(v === undefined || v === null || String(v).trim() === '') continue;
-      html += `<b>${k}:</b> ${v}<br/>`;
-    }
-    return html;
-  }
-
-  function addPoint(lat, lon, props){
-    if(lat === null || lon === null) return;
-    const m = L.circleMarker([lat, lon], { radius:5, color:'#1f78b4', fill:true, fillOpacity:0.9 });
-    // store original properties on the marker so we can update popup later
-    m.originalProps = props || {};
-    m.bindPopup(propertiesToHtml(m.originalProps));
-    pointsLayer.addLayer(m);
-  }
-
-  function assignDistrictsToPoints(){
-    if(!districtsGeoJSON) return;
-    if(!pointsLayer.getLayers().length) return;
-    // iterate markers and test against each district polygon
-    pointsLayer.getLayers().forEach(m => {
-      const latlng = m.getLatLng();
-      const pt = turf.point([latlng.lng, latlng.lat]);
-      let matched = null;
-      for(const f of districtsGeoJSON.features){
-        if(turf.booleanPointInPolygon(pt, f)){
-          matched = f.properties || {};
-          break;
-        }
-      }
-      if(matched){
-        m.originalProps = Object.assign({}, m.originalProps, { district: matched.NAME || matched.name || matched.DISTRICT || '' });
-      } else {
-        m.originalProps = Object.assign({}, m.originalProps, { district: null });
-      }
-      m.bindPopup(propertiesToHtml(m.originalProps));
+    // Higher panes are always rendered above lower panes, independent of fetch order.
+    ['districts', 'ctDistricts', 'schools', 'expo'].forEach((name, index) => {
+      map.createPane(name);
+      map.getPane(name).style.zIndex = 400 + index * 10;
     });
-  }
 
-  async function tryLoadGeoJSON(name, title){
-    try{
-      const r = await fetch(name);
-      if(!r.ok) throw new Error('not found');
-      const gj = await r.json();
-      const g = L.geoJSON(gj, {
-        style: (f) => ({ color: '#338833', weight: 1, fillColor: '#88ff88', fillOpacity: 0.25 }),
-        pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius:4, color:'#e31a1c', fill:true, fillOpacity:0.8 }),
-        onEachFeature: (f, layer) => layer.bindPopup(propertiesToHtml(f.properties))
-      }).addTo(map);
-      control.addOverlay(g, title);
-      console.log('Loaded', name);
-      return true;
-    } catch(e){
-      console.warn('GeoJSON not loaded:', name);
-      return false;
-    }
-  }
+    const districtsLayer = L.layerGroup().addTo(map);
+    const ctDistrictsLayer = L.layerGroup().addTo(map);
+    const schoolsLayer = L.layerGroup().addTo(map);
+    const expoLayer = L.layerGroup().addTo(map);
+    L.control.layers(null, {
+      'Education districts': districtsLayer,
+      'CT education districts': ctDistrictsLayer,
+      'All schools (2018-2025)': schoolsLayer,
+      '2026 District and School Expo': expoLayer
+    }, { collapsed: false }).addTo(map);
 
-  // load geojson files with basenames matching lyrx files
-  (async function(){
-    const basenames = ['All_Participating_Schools','Cape_Town','Eden_Karoo','Stellenbosch','West_Coast'];
-    for(const b of basenames){
-      await tryLoadGeoJSON(b + '.geojson', b);
+    function parseCoord(value) {
+      if (value === undefined || value === null) return null;
+      const number = parseFloat(String(value).trim().replace(',', '.'));
+      return Number.isFinite(number) ? number : null;
     }
 
-    // try loading the Education Districts layer (exported from QGIS as a GeoPackage — convert to GeoJSON)
-    // place Education_Districts.geojson next to index.html for client-side loading
-    // prefer the reprojected WGS84 file if present
-    let loadedDistricts = await tryLoadGeoJSON('Education_Districts_wgs84.geojson', 'Education Districts');
-    if(!loadedDistricts){
-      loadedDistricts = await tryLoadGeoJSON('Education_Districts.geojson', 'Education Districts');
+    function propertiesToHtml(properties) {
+      return Object.entries(properties || {})
+        .filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== '')
+        .map(([key, value]) => `<b>${key}:</b> ${value}<br/>`).join('');
     }
-    if(!loadedDistricts){
-      // try some common name variants (spaces, dashes, lowercase)
-      const variants = ['education_districts.geojson','education-districts.geojson','education districts.geojson','education%20districts.geojson','EducationDistricts.geojson'];
-      for(const v of variants){
-        loadedDistricts = await tryLoadGeoJSON(v, 'Education Districts');
-        if(loadedDistricts) break;
-      }
+
+    function addPoint(layer, lat, lon, properties, color, pane) {
+      if (lat === null || lon === null) return null;
+      const marker = L.circleMarker([lat, lon], {
+        radius: 5, color, fill: true, fillOpacity: 0.9, pane
+      }).bindPopup(propertiesToHtml(properties));
+      layer.addLayer(marker);
+      return marker;
     }
-    if(loadedDistricts){
-      try{
-        // fetch and store the raw geojson for turf tests (try reprojected filename first)
-        const r = await fetch('Education_Districts_wgs84.geojson');
-        if(r.ok) districtsGeoJSON = await r.json();
-        else {
-          // fallback: find the loaded layer from control (take first overlay)
-          // attempt to fetch any of the variants that succeeded
-          for(const v of ['Education_Districts.geojson','education_districts.geojson','education-districts.geojson','education districts.geojson','education%20districts.geojson','EducationDistricts.geojson']){
-            try{
-              const r2 = await fetch(v);
-              if(r2.ok){ districtsGeoJSON = await r2.json(); break; }
-            }catch(e){}
-          }
+
+    async function loadGeoJson(file, layer, style, pane) {
+      const response = await fetch(file);
+      if (!response.ok) throw new Error(`${file}: ${response.status}`);
+      const geoJson = await response.json();
+      L.geoJSON(geoJson, {
+        pane,
+        style,
+        onEachFeature: (feature, subLayer) =>
+          subLayer.bindPopup(propertiesToHtml(feature.properties))
+      }).eachLayer(subLayer => layer.addLayer(subLayer));
+      return geoJson;
+    }
+
+    function coordinateColumns(row) {
+      let lat = null;
+      let lon = null;
+      Object.keys(row).forEach(key => {
+        const normalized = key.trim().toLowerCase();
+        if (lon === null && /^(x|longitude|lon|x_coordinate|x-coordinate)$/.test(normalized)) {
+          lon = parseCoord(row[key]);
         }
-      } catch(e){ console.warn('Could not fetch districts geojson for turf:', e); }
+        if (lat === null && /^(y|latitude|lat|y_coordinate|y-coordinate)$/.test(normalized)) {
+          lat = parseCoord(row[key]);
+        }
+      });
+      return { lat, lon };
     }
 
-    // Try Excel first: 2018_2025_Summary.xlsx in this folder
-    const xlsxFiles = ['2018_2025_Summary.xlsx','2018_2025_Summary.XLSX'];
-    let excelLoaded = false;
-    for(const f of xlsxFiles){
-      try{
-        const resp = await fetch(f);
-        if(!resp.ok) continue;
-        const ab = await resp.arrayBuffer();
-        const wb = XLSX.read(ab, {type:'array'});
-        const sheetName = wb.SheetNames[0];
-        const ws = wb.Sheets[sheetName];
-        const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
-        console.log('Parsed', f, 'rows:', data.length);
-        data.forEach(row => {
-          // guess coordinate columns
-          const lonCandidates = ['X_COORDINATE','X-coordinate','X','Lon','LON','LONGITUDE','Longitude','x_coordinate','x-coordinate','x','lon','lng'];
-          const latCandidates = ['Y_COORDINATE','Y-coordinate','Y','Lat','LAT','LATITUDE','Latitude','y_coordinate','y-coordinate','y','lat'];
-          let lon=null, lat=null;
-          for(const k of Object.keys(row)){
-            const kk = k.trim();
-            if(lon === null && lonCandidates.some(c=>c.toLowerCase()===kk.toLowerCase())) lon = parseCoord(row[k]);
-            if(lat === null && latCandidates.some(c=>c.toLowerCase()===kk.toLowerCase())) lat = parseCoord(row[k]);
-          }
-          // also check if columns are named differently - try any numeric-looking columns
-          if(lat===null || lon===null){
-            for(const k of Object.keys(row)){
-              if(lat===null && /lat/i.test(k)) lat = parseCoord(row[k]);
-              if(lon===null && /lon|long|x/i.test(k)) lon = parseCoord(row[k]);
-            }
-          }
-          // final fallback: try columns by position if headerless
-          addPoint(lat, lon, row);
-        });
-        excelLoaded = true;
-        break;
-      } catch(e){
-        console.warn('Excel not loaded:', f, e.message || e);
+    async function loadSchools() {
+      const response = await fetch('2018_2025_Summary.xlsx');
+      if (!response.ok) throw new Error(`2018_2025_Summary.xlsx: ${response.status}`);
+      const workbook = XLSX.read(await response.arrayBuffer(), { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '' });
+      rows.forEach(row => {
+        const { lat, lon } = coordinateColumns(row);
+        addPoint(schoolsLayer, lat, lon, row, '#1f78b4', 'schools');
+      });
+    }
+
+    async function loadExpoPoints() {
+      const response = await fetch('2026_Dexpo.csv');
+      if (!response.ok) throw new Error(`2026_Dexpo.csv: ${response.status}`);
+      const text = await response.text();
+      const parsed = Papa.parse(text, { header: true, skipEmptyLines: true, delimiter: ';' });
+      parsed.data.forEach(row => {
+        const { lat, lon } = coordinateColumns(row);
+        addPoint(expoLayer, lat, lon, row, '#e31a1c', 'expo');
+      });
+    }
+
+    async function loadMapData() {
+      let districts;
+      try {
+        districts = await loadGeoJson('Education_Districts_wgs84.geojson', districtsLayer,
+          { color: '#245a9c', weight: 1.5, fillColor: '#74a9cf', fillOpacity: 0.2 }, 'districts');
+      } catch (error) {
+        console.error('Education districts could not be loaded:', error);
+      }
+      try {
+        await loadGeoJson('CT_Education_Districts_wgs84.geojson', ctDistrictsLayer,
+          { color: '#8c510a', weight: 2, fillColor: '#d8b365', fillOpacity: 0.25 }, 'ctDistricts');
+      } catch (error) {
+        console.error('CT education districts could not be loaded:', error);
+      }
+      try {
+        await loadSchools();
+      } catch (error) {
+        console.error('All schools could not be loaded:', error);
+      }
+      try {
+        await loadExpoPoints();
+      } catch (error) {
+        console.error('2026 expo points could not be loaded:', error);
+      }
+
+      const visibleLayers = schoolsLayer.getLayers().concat(expoLayer.getLayers());
+      if (visibleLayers.length) {
+        map.fitBounds(L.featureGroup(visibleLayers).getBounds(), { padding: [20, 20], maxZoom: 15 });
+      } else if (districts && districts.features.length) {
+        const districtLayer = L.geoJSON(districts);
+        map.fitBounds(districtLayer.getBounds(), { padding: [20, 20], maxZoom: 10 });
       }
     }
 
-    // after loading both points and districts, assign districts
-    assignDistrictsToPoints();
-
-    
-
-    // Fit to points
-    if(pointsLayer.getLayers().length){
-      const fg = L.featureGroup(pointsLayer.getLayers());
-      map.fitBounds(fg.getBounds(), { padding:[20,20], maxZoom:15 });
-    }
-
-  })();
-
+    loadMapData();
   </script>
 </body>
 </html>

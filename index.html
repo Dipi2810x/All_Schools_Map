@@ -16,6 +16,57 @@
       display: block;
       filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
     }
+    .think-tank-panel {
+      width: 310px;
+      max-height: calc(100vh - 40px);
+      overflow-y: auto;
+      background: #fff;
+      border: 1px solid #999;
+      border-radius: 4px;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.35);
+      font: 14px/1.4 Arial, sans-serif;
+    }
+    .think-tank-panel h2 {
+      margin: 0;
+      padding: 10px 12px 4px;
+      font-size: 16px;
+    }
+    .think-tank-panel p {
+      margin: 0;
+      padding: 0 12px 9px;
+      color: #555;
+    }
+    .think-tank-list {
+      border-top: 1px solid #ddd;
+    }
+    .think-tank-button {
+      display: block;
+      width: 100%;
+      padding: 8px 12px;
+      border: 0;
+      border-bottom: 1px solid #eee;
+      background: #fff;
+      color: #222;
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+    }
+    .think-tank-button:hover,
+    .think-tank-button[aria-pressed="true"] {
+      background: #f0e5f4;
+    }
+    .think-tank-button[aria-pressed="true"] {
+      box-shadow: inset 3px 0 #7b3294;
+    }
+    .think-tank-details {
+      padding: 10px 12px;
+      border-top: 1px solid #ddd;
+    }
+    @media (max-width: 480px) {
+      .think-tank-panel {
+        width: min(310px, calc(100vw - 60px));
+      }
+    }
   </style>
 </head>
 <body>
@@ -31,7 +82,7 @@
     }).addTo(map);
 
     // Higher panes are always rendered above lower panes, independent of fetch order.
-    ['districts', 'ctDistricts', 'schools', 'expo', 'deVenues', 'seVenues'].forEach((name, index) => {
+    ['districts', 'ctDistricts', 'schools', 'expo', 'deVenues', 'seVenues', 'thinkTankHighlight'].forEach((name, index) => {
       map.createPane(name);
       map.getPane(name).style.zIndex = 400 + index * 10;
     });
@@ -42,6 +93,8 @@
     const expoLayer = L.layerGroup().addTo(map);
     const deVenuesLayer = L.layerGroup().addTo(map);
     const seVenuesLayer = L.layerGroup().addTo(map);
+    const thinkTankHighlightsLayer = L.layerGroup().addTo(map);
+    let educationDistricts = [];
     L.control.layers(null, {
       '2026 DE venues': deVenuesLayer,
       '2026 SE venues': seVenuesLayer ,
@@ -50,6 +103,134 @@
       'CT education districts': ctDistrictsLayer,
       'Education districts': districtsLayer
     }, { collapsed: false }).addTo(map);
+
+    const thinkTankOrganisations = [
+      {
+        name: 'CPUT: South Africa Quantum Technology Initiative (SAQuTI)',
+        location: 'Cape Town (CPUT); outreach across all expo regions',
+        lat: -33.932, lon: 18.635,
+        allExpoRegions: true
+      },
+      {
+        name: 'Inkcubeko Youth Science Centre',
+        location: 'George, Eden Karoo',
+        lat: -33.963, lon: 22.461,
+        regions: ['Eden Karoo']
+      },
+      {
+        name: 'iThemba LABS',
+        location: 'Faure',
+        lat: -34.035, lon: 18.73,
+        regions: ['Cape Town']
+      },
+      {
+        name: 'NRF-SAEON',
+        location: 'Cape Town',
+        lat: -33.9249, lon: 18.4241,
+        regions: ['Cape Town']
+      },
+      {
+        name: 'South African National Space Agency (SANSA)',
+        location: 'Hermanus',
+        lat: -34.4187, lon: 19.2345,
+        regions: ['Cape Winelands']
+      },
+      {
+        name: 'South African Polar Research Infrastructure (SAPRI)',
+        location: 'Cape Town',
+        lat: -33.9249, lon: 18.4241,
+        regions: ['Cape Town']
+      },
+      {
+        name: 'Stellenbosch University (Division of Immunology: SAMRC Centre for TB Research)',
+        location: 'Cape Town',
+        lat: -33.9249, lon: 18.4241,
+        regions: ['Cape Town']
+      },
+      {
+        name: 'Stellenbosch University (Centre for Invasion Biology, School for Climate Studies)',
+        location: 'Cape Town',
+        lat: -33.9249, lon: 18.4241,
+        regions: ['Cape Town']
+      },
+      {
+        name: 'Stellenbosch University (Division of Molecular Biology and Human Genetics)',
+        location: 'Cape Town',
+        lat: -33.9249, lon: 18.4241,
+        regions: ['Cape Town']
+      }
+    ];
+
+    const thinkTankControl = L.control({ position: 'topleft' });
+    thinkTankControl.onAdd = () => {
+      const container = L.DomUtil.create('section', 'think-tank-panel');
+      container.setAttribute('aria-label', 'Think Tank Organisations');
+      const heading = L.DomUtil.create('h2', '', container);
+      heading.textContent = 'Think Tank Organisations';
+      const instructions = L.DomUtil.create('p', '', container);
+      instructions.textContent = 'Select an organisation to show its location and outreach region(s).';
+      const list = L.DomUtil.create('div', 'think-tank-list', container);
+      const details = L.DomUtil.create('div', 'think-tank-details', container);
+      details.hidden = true;
+      L.DomEvent.disableClickPropagation(container);
+      L.DomEvent.disableScrollPropagation(container);
+
+      thinkTankOrganisations.forEach(organisation => {
+        const button = L.DomUtil.create('button', 'think-tank-button', list);
+        button.type = 'button';
+        button.textContent = organisation.name;
+        button.setAttribute('aria-pressed', 'false');
+        L.DomEvent.on(button, 'click', () => {
+          list.querySelectorAll('.think-tank-button').forEach(item =>
+            item.setAttribute('aria-pressed', 'false'));
+          button.setAttribute('aria-pressed', 'true');
+          showThinkTankOrganisation(organisation, details);
+        });
+      });
+
+      return container;
+    };
+    thinkTankControl.addTo(map);
+
+    function showThinkTankOrganisation(organisation, details) {
+      thinkTankHighlightsLayer.clearLayers();
+      const matchingDistricts = organisation.allExpoRegions
+        ? educationDistricts
+        : educationDistricts.filter(feature =>
+          organisation.regions.includes(feature.properties.DISTRICT));
+      const districtLayer = L.geoJSON({
+        type: 'FeatureCollection',
+        features: matchingDistricts
+      }, {
+        pane: 'thinkTankHighlight',
+        style: { color: '#7b3294', weight: 4, fillColor: '#c994d8', fillOpacity: 0.4 }
+      });
+      thinkTankHighlightsLayer.addLayer(districtLayer);
+
+      const marker = L.circleMarker([organisation.lat, organisation.lon], {
+        radius: 9, color: '#fff', weight: 3, fillColor: '#7b3294', fillOpacity: 1,
+        pane: 'thinkTankHighlight'
+      }).bindPopup(`<b>${organisation.name}</b><br/>${organisation.location}`);
+      thinkTankHighlightsLayer.addLayer(marker);
+
+      const regionNames = matchingDistricts.map(feature => feature.properties.DISTRICT);
+      details.replaceChildren();
+      const name = L.DomUtil.create('strong', '', details);
+      name.textContent = organisation.name;
+      const location = L.DomUtil.create('div', '', details);
+      location.textContent = `Location: ${organisation.location}`;
+      const coverage = L.DomUtil.create('div', '', details);
+      coverage.textContent = `Highlighted region${regionNames.length === 1 ? '' : 's'}: ${
+        regionNames.length ? regionNames.join(', ') : 'No matching mapped district'
+      }`;
+      details.hidden = false;
+
+      const focus = L.featureGroup([districtLayer, marker]);
+      if (focus.getBounds().isValid()) {
+        map.fitBounds(focus.getBounds(), { padding: [30, 30], maxZoom: 12 });
+      }
+      marker.openPopup();
+    }
 
     function parseCoord(value) {
       if (value === undefined || value === null) return null;
@@ -93,6 +274,9 @@
       const response = await fetch(file);
       if (!response.ok) throw new Error(`${file}: ${response.status}`);
       const geoJson = await response.json();
+      if (file === 'Education_Districts_wgs84.geojson') {
+        educationDistricts = geoJson.features;
+      }
       L.geoJSON(geoJson, {
         pane,
         style,

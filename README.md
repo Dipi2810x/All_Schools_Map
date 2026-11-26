@@ -1,5 +1,10 @@
 https://dipi2810x.github.io/All_Schools_Map/
 
+Map point data:
+
+- `2026_Schools.csv` supplies the 2026 participating-school markers.
+- `Think_Tank_Organisations.csv` supplies the Think Tank organisation markers; it uses semicolon-separated `ORGANISATION`, `TOWN_AREA`, `X_COORDINATE`, and `Y_COORDINATE` columns.
+
 Convert the district shapefiles before publishing:
 
 ```powershell
